@@ -8,7 +8,9 @@
 > `sell`/`transfer`, the missing answer to "who owns a balance when the payer is
 > shielded"); strengthened **§6** with explicit **atomicity**, **confirmation/reorg**, and
 > **security-invariant** rules; made the **settle-against-on-chain-value** rule normative
-> in §4.2. All additions are protocol-level and implementation-neutral.
+> in §4.2; and clarified that `ticket`/draw (§4.5/§7) are **optional, non-normative**
+> platform extensions, not core token conformance. All additions are protocol-level and
+> implementation-neutral.
 
 ZPAD-20 is a meta-protocol for issuing and trading fungible tokens on Zcash with a
 built-in **bonding curve** (instant liquidity, deterministic pricing). It is the
@@ -70,6 +72,11 @@ An op larger than a single memo MAY be chunked across memos with `{ "i": <index>
 
 ## 4. Operations
 
+The **core token protocol** is four ops: `deploy`, `buy`, `sell`, `transfer` (§4.1–4.4),
+plus the identity/authorization rules in §4.6. Everything a conforming indexer needs to
+derive token state lives here. `ticket` (§4.5) is an **optional, non-normative** platform
+extension — see its note.
+
 ### 4.1 `deploy` — define a token
 
 ```json
@@ -100,6 +107,9 @@ The deploy tx also pays the **launch fee** (`0.1 ZEC`) to the platform/pool addr
 
 The tx sends shielded ZEC to the **curve-reserve** address. The indexer computes
 `tokens_out` from the curve (§5) and credits the identity named by `cpk` (§4.6).
+Unlike `sell`/`transfer`, a `buy` carries **no signature**: the on-chain payment *is* the
+authorization (you cannot pay on someone else's behalf), so the memo only needs to declare
+which `cpk` to credit.
 
 > **Security invariant — settle against on-chain value.** A conforming indexer MUST
 > compute `tokens_out` from the ZEC the reserve **actually received** in that transaction
@@ -136,14 +146,20 @@ The recipient is named by their **claim-key** (`to`), not a Zcash address — th
 share their `cpk` to receive. The indexer verifies `sig`/`nonce` and that `cpk` holds
 ≥ `amt` (§4.6) before moving the balance.
 
-### 4.5 `ticket` — Shadow Pass reward ticket
+### 4.5 `ticket` — reward ticket (optional, non-normative)
+
+> **Optional platform extension — NOT part of the core token protocol.** `ticket` and the
+> draw it feeds (§7) describe a reward primitive used by the reference platform; they are
+> **not** required for ZPAD-20 token conformance. A conforming indexer MAY ignore `ticket`
+> ops entirely — core token state (`deploy`/`buy`/`sell`/`transfer`) does not depend on
+> them. Documented here only so reward-aware implementations agree on the shape.
 
 ```json
 { "p": "zpad-20", "op": "ticket", "net": "main", "month": "2026-06", "quest": "trade", "to": "u1..." }
 ```
 
 A claim minted when a user completes a daily quest. One ticket op per quest per
-day; the monthly draw (§7) selects winners from claimed tickets.
+day; the optional monthly draw (§7) selects winners from claimed tickets.
 
 ### 4.6 Identity & authorization (claim-key)
 
@@ -226,8 +242,9 @@ An indexer MUST:
 2. **Validate** each op (known `op`, well-formed fields, tick exists for buy/sell/
    transfer, sufficient balance for sell/transfer). Invalid/duplicate ops are
    **ignored**, never errored — state must remain deterministic.
-3. Maintain per-token: `raised`, `tokens_sold`, holder balances, and (for fee/pool
-   accounting) the launch/trade/featured/ticket fee splits.
+3. Maintain per-token: `raised`, `tokens_sold`, and holder balances (the core state).
+   An implementation MAY additionally track platform fee/pool accounting (launch/trade and
+   any optional extensions), but that is not required for core token conformance.
 4. Derive price, market cap, circulating supply and **holder distribution**
    (counts/concentration only — never expose addresses) from the above.
 5. Be **reproducible**: same chain → same state. Publishing the ruleset lets anyone run
@@ -255,7 +272,11 @@ and uses a `lightwalletd` viewing key to detect shielded payments to the reserve
 
 ---
 
-## 7. Monthly draw (Shadow Pass)
+## 7. Monthly draw (optional, non-normative)
+
+> **Optional platform extension** tied to the `ticket` op (§4.5) — not part of core token
+> conformance. Included to show that *if* an implementation runs a reward draw, it can do so
+> verifiably. Implementations without rewards omit this entirely.
 
 Verifiable and tamper-proof — no admin can change the outcome:
 
@@ -282,9 +303,11 @@ winners       = the lowest scores (rank order)
 | Ticket claim   | ~0.001 ZEC   | makes the ticket real on-chain |
 | Featured slot  | 1 / 2.5 / 5 ZEC | 24h / 3d / 7d homepage promotion |
 
-A configured share of each fee funds the community **prize pool** (sustainable, not
-minted). Network fees follow ZIP-317 (~0.0001 ZEC/tx) and go to Zcash, not the
-platform. All fees are shown before confirmation.
+The **core** fees are Launch, Trade and Graduation; **Ticket claim** and **Featured slot**
+belong to optional platform extensions (§4.5/§7) and are listed only for completeness — a
+minimal conforming implementation need not charge them. A configured share of each fee MAY
+fund a community **prize pool** (sustainable, not minted). Network fees follow ZIP-317
+(~0.0001 ZEC/tx) and go to Zcash, not the platform. All fees are shown before confirmation.
 
 ---
 

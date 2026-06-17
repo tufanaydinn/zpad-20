@@ -18,7 +18,8 @@ authorization, bonding curve, indexer rules, draw, fees, graduation).
 
 ## At a glance
 
-- **Operations:** `deploy` · `buy` · `sell` · `transfer` (+ a Shadow Pass `ticket` op)
+- **Core operations:** `deploy` · `buy` · `sell` · `transfer` (+ an *optional*, non-normative
+  `ticket` reward op that conforming indexers may ignore)
 - **Identity:** a **claim-key** (`cpk`) keys balances and authorizes ops — answers "who
   owns a balance when the payer is shielded?" without per-action address signing (§4.6)
 - **Carriers:** shielded memo (ZIP-302, private intent) or transparent `OP_RETURN`
