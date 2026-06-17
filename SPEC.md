@@ -1,8 +1,14 @@
 # ZPAD-20 — Bonding-Curve Token Standard for Zcash
 
-> **Status:** Draft v0.1 · **Network:** testnet first, then mainnet
+> **Status:** Draft v0.2 · **Network:** testnet first, then mainnet
 > **Layer:** application meta-protocol (no consensus changes)
 > **License:** open — anyone may implement an indexer/wallet against this spec.
+>
+> **v0.2 changes:** added **§4.6 Identity & authorization** (claim-key + signed
+> `sell`/`transfer`, the missing answer to "who owns a balance when the payer is
+> shielded"); strengthened **§6** with explicit **atomicity**, **confirmation/reorg**, and
+> **security-invariant** rules; made the **settle-against-on-chain-value** rule normative
+> in §4.2. All additions are protocol-level and implementation-neutral.
 
 ZPAD-20 is a meta-protocol for issuing and trading fungible tokens on Zcash with a
 built-in **bonding curve** (instant liquidity, deterministic pricing). It is the
@@ -89,26 +95,46 @@ The deploy tx also pays the **launch fee** (`0.1 ZEC`) to the platform/pool addr
 ### 4.2 `buy` — purchase from the curve
 
 ```json
-{ "p": "zpad-20", "op": "buy", "tick": "ZINU", "zec_in": 1.0 }
+{ "p": "zpad-20", "op": "buy", "tick": "ZINU", "cpk": "<claim-key, 32-byte hex>" }
 ```
 
-The tx sends `zec_in` shielded ZEC to the **curve-reserve** address. The indexer
-computes `tokens_out` from the curve (§5) and credits the sender.
+The tx sends shielded ZEC to the **curve-reserve** address. The indexer computes
+`tokens_out` from the curve (§5) and credits the identity named by `cpk` (§4.6).
+
+> **Security invariant — settle against on-chain value.** A conforming indexer MUST
+> compute `tokens_out` from the ZEC the reserve **actually received** in that transaction
+> — never from any amount asserted in the memo. The op declares *who* is buying (`cpk`),
+> not *how much*; the amount is whatever the chain shows. This is the core defence against
+> fake-payment / curve-pump attacks (a memo cannot claim value it did not pay).
 
 ### 4.3 `sell` — sell back to the curve
 
 ```json
-{ "p": "zpad-20", "op": "sell", "tick": "ZINU", "amt": 32258065 }
+{
+  "p": "zpad-20", "op": "sell", "tick": "ZINU", "amt": 32258065,
+  "cpk": "<seller claim-key, hex>", "payout": "<address ZEC is sent to>",
+  "nonce": 7, "sig": "<signature over the op, see §4.6>"
+}
 ```
 
-`amt` tokens return to the curve; the reserve sends `zec_out` (minus fee) to the
-seller.
+`amt` tokens return to the curve; the reserve sends `zec_out` (minus fee) to `payout`.
+A sell is **authorized**, not merely asserted: the indexer MUST verify `sig` against
+`cpk`, enforce the `nonce` rule (§4.6), and confirm `cpk` holds ≥ `amt` before applying
+it. `payout` is inside the signed message, so an observer cannot redirect the proceeds.
 
 ### 4.4 `transfer` — move tokens between users
 
 ```json
-{ "p": "zpad-20", "op": "transfer", "tick": "ZINU", "amt": 1000000, "to": "u1..." }
+{
+  "p": "zpad-20", "op": "transfer", "tick": "ZINU", "amt": 1000000,
+  "cpk": "<sender claim-key, hex>", "to": "<recipient claim-key, hex>",
+  "nonce": 8, "sig": "<signature over the op, see §4.6>"
+}
 ```
+
+The recipient is named by their **claim-key** (`to`), not a Zcash address — they simply
+share their `cpk` to receive. The indexer verifies `sig`/`nonce` and that `cpk` holds
+≥ `amt` (§4.6) before moving the balance.
 
 ### 4.5 `ticket` — Shadow Pass reward ticket
 
@@ -118,6 +144,42 @@ seller.
 
 A claim minted when a user completes a daily quest. One ticket op per quest per
 day; the monthly draw (§7) selects winners from claimed tickets.
+
+### 4.6 Identity & authorization (claim-key)
+
+A meta-protocol indexer faces a problem the base chain does not answer: when a buyer
+pays from a **shielded** address, the sender is hidden — so *whom* does the indexer
+credit, and later, how does it know a `sell`/`transfer` came from the rightful owner?
+Pre-ZSA, Zcash addresses also have **no standard message signing**, so the address
+itself cannot authorize an op. ZPAD-20 resolves this with a **claim-key**.
+
+- **Identity = a claim-key (`cpk`)** — a public key of a signature scheme (e.g. Ed25519),
+  represented as 32-byte hex. It is *not* a Zcash address and holds no ZEC; it exists only
+  to key balances and authorize ops. A user MAY derive it deterministically from a secret
+  they control, and MAY use a fresh `cpk` per token for unlinkability. Token balances are
+  keyed by `cpk`, never by an address.
+
+- **`buy` binds ownership at payment time.** The `cpk` travels in the same note as the
+  payment, set by the payer and immutable once mined. The indexer credits that `cpk`. No
+  signature is needed — *paying is the act*; an observer can read `cpk` but cannot reassign
+  the credit.
+
+- **`sell`/`transfer` carry an authorizing signature.** The op includes `cpk`, a `nonce`,
+  and a `sig`. A conforming indexer MUST:
+  1. **Verify** `sig` against `cpk` over a canonical message that **binds every
+     value-bearing field** of the op (at minimum: op type, tick, amount, destination —
+     `payout` for sell / recipient `to` for transfer — and the nonce). Binding all fields
+     means no field can be altered after signing (no amount/destination tampering).
+  2. **Enforce a strictly-increasing `nonce` per `cpk`** (per token). An op whose nonce is
+     ≤ the last applied nonce for that `cpk` is rejected — replay protection. (This
+     complements the per-`(txid, index)` single-application rule of §6.)
+  3. **Check balance** — `cpk` must hold ≥ `amt`.
+  Any failure → the op is **ignored** (consistent with §6's "invalid → ignore, never
+  error"), so state stays deterministic.
+
+> The spec fixes *which fields the signature must bind* and *how the nonce behaves*, not a
+> specific byte layout — conforming implementations choose the exact canonical encoding and
+> signature scheme, as long as any indexer can reproduce the verification.
 
 ---
 
@@ -168,9 +230,25 @@ An indexer MUST:
    accounting) the launch/trade/featured/ticket fee splits.
 4. Derive price, market cap, circulating supply and **holder distribution**
    (counts/concentration only — never expose addresses) from the above.
-5. Be **reproducible**: same chain → same state. Handle reorgs by rolling back to
-   the common ancestor and replaying. Publishing the ruleset lets anyone run a
-   verifying indexer (no trusted oracle).
+5. Be **reproducible**: same chain → same state. Publishing the ruleset lets anyone run
+   a verifying indexer (no trusted oracle).
+6. Apply each op **atomically**: all of an op's ledger effects (balance debit/credit,
+   nonce consumption, any payout obligation) commit together or not at all. A partially
+   applied op is forbidden — it would break determinism and could move a balance without
+   recording the nonce (a replay window) or owe a payout without debiting. Each op is also
+   applied **at most once**, keyed by `(txid, output index)`.
+7. **Confirmations & reorgs.** A payment is not "settled" until it has the confirmations the
+   implementation requires for its value (deeper for larger amounts is recommended). An op
+   buried past a **finality depth** is treated as final. On a reorg, roll back to the common
+   ancestor and **replay** deterministically; an op whose containing block was orphaned
+   inside the finality window MUST be undone (or replay must reproduce the corrected state).
+   A conforming indexer MUST NOT continue settling on top of state it can no longer prove.
+
+**Security invariants** (a conforming indexer MUST uphold):
+- **Settle against on-chain value, never the memo's claim** (§4.2) — token amounts derive
+  from ZEC actually received, not from any figure asserted in the op.
+- **Authorize value-moving ops** — `sell`/`transfer` apply only with a valid signature,
+  fresh nonce, and sufficient balance (§4.6).
 
 The reference implementation reads full blocks from `zebrad` for transparent ops
 and uses a `lightwalletd` viewing key to detect shielded payments to the reserve.

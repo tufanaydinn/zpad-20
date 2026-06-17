@@ -13,18 +13,22 @@ no trusted oracle.
 
 ## Read the spec
 
-👉 **[SPEC.md](./SPEC.md)** — full specification (envelope, operations, bonding curve,
-indexer rules, draw, fees, graduation).
+👉 **[SPEC.md](./SPEC.md)** — full specification (envelope, operations, identity &
+authorization, bonding curve, indexer rules, draw, fees, graduation).
 
 ## At a glance
 
 - **Operations:** `deploy` · `buy` · `sell` · `transfer` (+ a Shadow Pass `ticket` op)
+- **Identity:** a **claim-key** (`cpk`) keys balances and authorizes ops — answers "who
+  owns a balance when the payer is shielded?" without per-action address signing (§4.6)
 - **Carriers:** shielded memo (ZIP-302, private intent) or transparent `OP_RETURN`
 - **Curve:** constant-product with virtual reserves (`Z·T = k`), price `= Z / T`,
   deterministic from cumulative ZEC raised
 - **Privacy:** *private participation, transparent supply* — implementations expose only
   aggregates (counts, concentration), never per-wallet surveillance
-- **Status:** Draft v0.1 · testnet first, then mainnet
+- **Determinism:** atomic op application, confirmation/reorg rules, and security
+  invariants (settle against on-chain value; authorize value-moving ops) — §6
+- **Status:** Draft v0.2 · testnet first, then mainnet
 
 ## Reference implementation
 
